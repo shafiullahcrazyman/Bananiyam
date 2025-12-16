@@ -94,7 +94,7 @@ export default function App() {
             onClick={handleGoHome}
           >
             <h1 className="text-xl font-bold bg-gradient-to-r from-primary-700 to-secondary-700 dark:from-primary-400 dark:to-secondary-400 bg-clip-text text-transparent">
-              Bananiyam
+              Bananyum
             </h1>
           </div>
           
