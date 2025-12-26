@@ -5,8 +5,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
-    // CRITICAL FIX: Use './' so assets load correctly on GitHub Pages
-    base: './',   
+    base: './', // This ensures assets load correctly on any path
     server: {
       port: 3000,
       host: '0.0.0.0',
