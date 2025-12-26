@@ -1,17 +1,18 @@
---- START OF FILE Bananyum-main/components/GameMode.tsx ---
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Play, Volume2, ArrowRight, Trophy, AlertCircle, RotateCcw, 
-  Sparkles, Timer, Check, Map as MapIcon, Skull, Dices, VolumeX, Plus, Star, Zap, Target, Home, Compass
+  Sparkles, Timer, Shuffle, Split, Keyboard, Clock, Check, EyeOff, 
+  Map as MapIcon, Skull, Calendar, Users, Dices, VolumeX, RefreshCcw, Brain, Zap, Target, Home, Swords, Plane, Compass, Plus, Star, WifiOff, Mic
 } from 'lucide-react';
 import { WordChallenge, HomophoneChallenge, Difficulty, GameState, ScoreData, GameVariant, AdventureLevel, AppSettings } from '../types';
 import { generateWordList, generateRemedialWordList, generateHomophones, generateRemedialHomophones, generateDailyWord } from '../services/geminiService';
 import { OfflineService } from '../services/offlineService';
 import { GameAudio } from '../services/audioUtils';
+import LiveCoachMode from './LiveCoachMode';
 
 interface Props {
+  onBack: () => void;
   settings: AppSettings;
   setHeaderConfig: (config: { title: string | null; color: string }) => void;
   updateSettings: (newSettings: Partial<AppSettings>) => void;
@@ -22,24 +23,27 @@ const getWaveSvg = (color: string) =>
   `data:image/svg+xml,%3Csvg width='40' height='12' viewBox='0 0 40 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 6 Q 10 1 20 6 T 40 6' stroke='${encodeURIComponent(color)}' fill='none' stroke-width='4' stroke-linecap='round' stroke-linejoin='round' /%3E%3C/svg%3E`;
 
 const WavyProgressBar = ({ progress, glow }: { progress: number; glow?: boolean }) => {
-  const trackWave = getWaveSvg('#94a3b8'); 
-  const progressWave = getWaveSvg('#0ea5e9'); 
+  const trackWave = getWaveSvg('#94a3b8'); // Slate-400 for better visibility in dark/light
+  const progressWave = getWaveSvg('#0ea5e9'); // Primary-500
 
   return (
     <div className="w-full h-3 mb-8 mt-8 md:mt-0 relative">
+      {/* Background Track */}
       <div 
         className="absolute inset-0 w-full h-full bg-repeat-x bg-left-center opacity-30 dark:opacity-20"
         style={{ backgroundImage: `url("${trackWave}")`, backgroundSize: '40px 12px' }}
       />
+      
+      {/* Progress Fill - Clipped by width */}
       <div 
         className="absolute inset-0 h-full bg-repeat-x bg-left-center transition-all duration-500 ease-out"
         style={{ 
-          width: `${Math.max(5, progress)}%`, 
+          width: `${Math.max(5, progress)}%`, // Min width to show the cap
           backgroundImage: `url("${progressWave}")`, 
           backgroundSize: '40px 12px',
           overflow: 'hidden',
-          borderRight: '1px solid transparent', 
-          filter: glow ? 'drop-shadow(0 0 6px #38bdf8)' : 'none', 
+          borderRight: '1px solid transparent', // Fix for some render artifacts
+          filter: glow ? 'drop-shadow(0 0 6px #38bdf8)' : 'none', // Glow effect
           transition: 'filter 0.3s ease'
         }}
       />
@@ -47,7 +51,7 @@ const WavyProgressBar = ({ progress, glow }: { progress: number; glow?: boolean 
   );
 };
 
-const GAME_TITLES: Record<string, string> = {
+const GAME_TITLES: Record<GameVariant, string> = {
   CLASSIC: 'Spell by Sound',
   HOMOPHONE: 'Homophone Battle',
   SPEED: 'Speed Speller',
@@ -65,7 +69,7 @@ const GAME_TITLES: Record<string, string> = {
   MEMORY: 'Memory Flash'
 };
 
-const GAME_COLORS: Record<string, string> = {
+const GAME_COLORS: Record<GameVariant, string> = {
   CLASSIC: 'blue',
   HOMOPHONE: 'emerald',
   SPEED: 'amber',
@@ -83,12 +87,9 @@ const GAME_COLORS: Record<string, string> = {
   MEMORY: 'violet'
 };
 
-const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }) => {
-  const { variant } = useParams<{ variant: string }>();
-  const navigate = useNavigate();
-  const gameVariant = (variant as GameVariant) || 'CLASSIC';
-
-  const [gameState, setGameState] = useState<GameState>(GameState.DIFFICULTY_SELECT);
+const GameMode: React.FC<Props> = ({ onBack, settings, setHeaderConfig, updateSettings }) => {
+  const [gameState, setGameState] = useState<GameState>(GameState.MENU);
+  const [gameVariant, setGameVariant] = useState<GameVariant>('CLASSIC');
   const [difficulty, setDifficulty] = useState<Difficulty>(Difficulty.EASY);
   
   // Content State
@@ -102,7 +103,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
   const [feedback, setFeedback] = useState<'none' | 'correct' | 'incorrect' | 'mp_result'>('none');
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
-  const [inputAnimation, setInputAnimation] = useState(''); 
+  const [inputAnimation, setInputAnimation] = useState(''); // 'animate-shake' etc.
   
   // Timer State (Speed Mode)
   const [timeLeft, setTimeLeft] = useState(60);
@@ -110,10 +111,10 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
 
   // Special Mode States
   const [scrambledWord, setScrambledWord] = useState('');
-  const [maskedWord, setMaskedWord] = useState(''); 
-  const [memoryVisible, setMemoryVisible] = useState(false); 
+  const [maskedWord, setMaskedWord] = useState(''); // For Missing Letter
+  const [memoryVisible, setMemoryVisible] = useState(false); // For Memory Mode
   
-  // Multiplayer State
+  // Multiplayer State (Local 1v1)
   const [mpPlayerTurn, setMpPlayerTurn] = useState<1 | 2>(1);
   const [mpScores, setMpScores] = useState({ p1: 0, p2: 0 });
   const [mpRoundStats, setMpRoundStats] = useState<{
@@ -123,39 +124,30 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
   const [mpStartTime, setMpStartTime] = useState(0);
   const [mpWinner, setMpWinner] = useState<'p1' | 'p2' | 'draw' | null>(null);
 
+  // Wheel State
+  const [isSpinning, setIsSpinning] = useState(false);
+
   // Adventure State
   const [adventureLevels, setAdventureLevels] = useState<AdventureLevel[]>([]);
   const [journeyTheme, setJourneyTheme] = useState<string>("");
   const [customTopic, setCustomTopic] = useState("");
 
-  // Initial Setup based on variant
+  // Update Header Configuration
   useEffect(() => {
-    // If it's ADVENTURE, go straight to map if data exists, or setup
-    if (gameVariant === 'ADVENTURE') {
-        const savedLevels = localStorage.getItem('spellbound_levels');
-        if (savedLevels) {
-             setGameState(GameState.ADVENTURE_MAP);
-        } else {
-             setGameState(GameState.ADVENTURE_MAP); // Will show create screen
-        }
-    } 
-    // If it doesn't need difficulty, start immediately
-    else if (!['CLASSIC', 'SPEED', 'MISSING_LETTER', 'SCRAMBLE', 'SENTENCE_SPELL', 'WHISPER', 'SILENT_LETTER', 'REVERSE', 'MEMORY', 'MULTIPLAYER', 'HOMOPHONE', 'BOSS', 'DAILY'].includes(gameVariant)) {
-        initGame(Difficulty.MEDIUM);
-    } 
-    // Otherwise show difficulty select (default state)
-  }, [gameVariant]);
-
-  // Update Header
-  useEffect(() => {
-    setHeaderConfig({ 
-        title: GAME_TITLES[gameVariant] || 'Game', 
-        color: GAME_COLORS[gameVariant] || 'primary'
-    });
+    if (gameState === GameState.MENU) {
+      setHeaderConfig({ title: "Game Arcade", color: "primary" });
+    } else {
+      setHeaderConfig({ 
+          title: GAME_TITLES[gameVariant], 
+          color: GAME_COLORS[gameVariant] 
+      });
+    }
+    
+    // Cleanup on unmount
     return () => setHeaderConfig({ title: null, color: "primary" });
-  }, [gameVariant, setHeaderConfig]);
+  }, [gameState, gameVariant, setHeaderConfig]);
 
-  // Load Adventure Data
+  // Load Adventure Data from LocalStorage
   useEffect(() => {
     const savedLevels = localStorage.getItem('spellbound_levels');
     const savedTheme = localStorage.getItem('spellbound_theme');
@@ -176,8 +168,13 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
 
   // Voice State
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+
+  // Load voices
   useEffect(() => {
-    const updateVoices = () => setVoices(window.speechSynthesis.getVoices());
+    const updateVoices = () => {
+      const vs = window.speechSynthesis.getVoices();
+      setVoices(vs);
+    };
     updateVoices();
     window.speechSynthesis.onvoiceschanged = updateVoices;
     return () => { window.speechSynthesis.onvoiceschanged = null; };
@@ -189,11 +186,11 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
     if (timerActive && timeLeft > 0) {
       interval = window.setInterval(() => {
         setTimeLeft((t) => {
-          if (t <= 5 && t > 0) GameAudio.playTick(); 
+          if (t <= 5 && t > 0) GameAudio.playTick(); // Tick sound last 5 seconds
           if (t <= 1) {
             setTimerActive(false);
             setGameState(GameState.SUMMARY);
-            GameAudio.playWin(); 
+            GameAudio.playWin(); // End sound
             return 0;
           }
           return t - 1;
@@ -212,6 +209,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
       const shuffled = w.toUpperCase().split('').sort(() => Math.random() - 0.5).join('');
       setScrambledWord(shuffled === w.toUpperCase() ? w.toUpperCase().split('').reverse().join('') : shuffled);
     } else if (gameVariant === 'MISSING_LETTER') {
+      // Hide ~30% of letters, minimum 1
       const chars = w.split('');
       const indicesToHide = new Set<number>();
       const numToHide = Math.max(1, Math.floor(chars.length * 0.4));
@@ -221,24 +219,59 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
       setMaskedWord(chars.map((c, i) => indicesToHide.has(i) ? '_' : c).join(''));
     } else if (gameVariant === 'MEMORY') {
       setMemoryVisible(true);
-      setTimeout(() => setMemoryVisible(false), 2000); 
+      setTimeout(() => setMemoryVisible(false), 2000); // Hide after 2 seconds
     } else if (gameVariant === 'MULTIPLAYER') {
+        // Reset multiplayer round
         setMpPlayerTurn(1);
         setMpRoundStats({});
         setMpStartTime(Date.now());
         setMpWinner(null);
     }
+
   }, [currentIndex, words, gameVariant]);
 
+  const handleGameSelect = (variant: GameVariant) => {
+    GameAudio.playClick();
+    
+    // Modes that require difficulty selection
+    const needsDifficulty = [
+      'CLASSIC', 'SPEED', 'MISSING_LETTER', 'SCRAMBLE', 
+      'SENTENCE_SPELL', 'WHISPER', 'SILENT_LETTER', 
+      'REVERSE', 'MEMORY', 'MULTIPLAYER', 'HOMOPHONE',
+      'BOSS', 'DAILY'
+    ];
+
+    setGameVariant(variant);
+
+    if (needsDifficulty.includes(variant)) {
+      setGameState(GameState.DIFFICULTY_SELECT);
+    } else {
+      initGame(variant, Difficulty.MEDIUM); 
+    }
+  };
 
   const playWord = useCallback((text: string, isWhisper = false) => {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Voice Selection Logic
     const targetLang = settings.voiceAccent === 'GB' ? 'en-GB' : 'en-US';
+    
+    // Filter by exact language match or partial match (some systems use underscores)
     const matchingVoices = voices.filter(v => v.lang === targetLang || v.lang.replace('_', '-').includes(targetLang));
+    
+    // Try to find a good voice
     let selectedVoice = matchingVoices.find(v => v.name.includes("Google") || v.name.includes("Siri") || v.name.includes("Microsoft"));
-    if (!selectedVoice && matchingVoices.length > 0) selectedVoice = matchingVoices[0];
-    if (!selectedVoice) selectedVoice = voices.find(v => v.lang.startsWith('en'));
+    
+    if (!selectedVoice && matchingVoices.length > 0) {
+        selectedVoice = matchingVoices[0];
+    }
+    
+    // Fallback if requested accent isn't found at all
+    if (!selectedVoice) {
+         // Fallback to any English voice
+         selectedVoice = voices.find(v => v.lang.startsWith('en'));
+    }
 
     if (selectedVoice) {
       utterance.voice = selectedVoice;
@@ -248,23 +281,26 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
     }
 
     if (isWhisper) {
-        utterance.volume = 0.3 * settings.ttsVolume; 
+        utterance.volume = 0.3 * settings.ttsVolume; // Scale by setting
         utterance.pitch = 1.0; 
         utterance.rate = 0.6;
     } else {
         utterance.rate = 0.9;
         utterance.pitch = 1.0;
-        utterance.volume = 1.0 * settings.ttsVolume; 
+        utterance.volume = 1.0 * settings.ttsVolume; // Scale by setting
     }
     
     utterance.onstart = () => setIsPlayingAudio(true);
     utterance.onend = () => setIsPlayingAudio(false);
     utterance.onerror = () => setIsPlayingAudio(false);
+
     window.speechSynthesis.speak(utterance);
   }, [voices, settings.ttsVolume, settings.voiceAccent]);
 
-  const initGame = async (selectedDifficulty: Difficulty) => {
+  // Robust Game Initialization with Auto-Fallback
+  const initGame = async (variant: GameVariant, selectedDifficulty: Difficulty) => {
     GameAudio.playClick();
+    setGameVariant(variant);
     setDifficulty(selectedDifficulty);
     setGameState(GameState.LOADING);
     setScore({ correct: 0, total: 0, history: [] });
@@ -272,26 +308,30 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
     setUserInput('');
     setFeedback('none');
     
+    // Multiplayer Reset
     setMpScores({ p1: 0, p2: 0 });
     setMpRoundStats({});
     setMpWinner(null);
     
+    // Determine initial mode based on settings
     let useOffline = settings.isOfflineMode;
 
+    // Helper to fetch data based on current mode preference
     const loadData = async (offline: boolean) => {
-        const count = (gameVariant === 'SPEED' || gameVariant === 'BOSS') ? 15 : 5;
+        const count = (variant === 'SPEED' || variant === 'BOSS') ? 15 : 5;
         
         if (offline) {
-             if (gameVariant === 'HOMOPHONE') return await OfflineService.generateHomophones(selectedDifficulty, 5);
-             if (gameVariant === 'DAILY') return await OfflineService.generateDailyWord(selectedDifficulty);
-             if (gameVariant === 'BOSS') return await OfflineService.generateWordList(Difficulty.EXTREME, 10);
+             if (variant === 'HOMOPHONE') return await OfflineService.generateHomophones(selectedDifficulty, 5);
+             if (variant === 'DAILY') return await OfflineService.generateDailyWord(selectedDifficulty);
+             if (variant === 'BOSS') return await OfflineService.generateWordList(Difficulty.EXTREME, 10);
+             // Note: Offline service might not support context 'SILENT_LETTER' perfectly, but it returns words
              return await OfflineService.generateWordList(selectedDifficulty, count);
         } else {
-             if (gameVariant === 'HOMOPHONE') return await generateHomophones(selectedDifficulty, 5);
-             if (gameVariant === 'DAILY') return await generateDailyWord(selectedDifficulty);
-             if (gameVariant === 'BOSS') return await generateWordList(selectedDifficulty, 10, 'BOSS');
-             if (gameVariant === 'SILENT_LETTER') return await generateWordList(selectedDifficulty, 5, 'SILENT_LETTER');
-             return await generateWordList(selectedDifficulty, count, gameVariant === 'ADVENTURE' ? journeyTheme : undefined);
+             if (variant === 'HOMOPHONE') return await generateHomophones(selectedDifficulty, 5);
+             if (variant === 'DAILY') return await generateDailyWord(selectedDifficulty);
+             if (variant === 'BOSS') return await generateWordList(selectedDifficulty, 10, 'BOSS');
+             if (variant === 'SILENT_LETTER') return await generateWordList(selectedDifficulty, 5, 'SILENT_LETTER');
+             return await generateWordList(selectedDifficulty, count, variant === 'ADVENTURE' ? journeyTheme : undefined);
         }
     };
 
@@ -302,45 +342,57 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
         loadedWords = await loadData(useOffline);
     } catch (e) {
         console.warn("Primary data load failed", e);
+        
+        // --- FALLBACK LOGIC ---
+        // If we were trying Online and it failed, switch to Offline automatically
         if (!useOffline) {
             setLoadingMessage("AI unavailable. Switching to Offline Mode...");
-            updateSettings({ isOfflineMode: true }); 
+            updateSettings({ isOfflineMode: true }); // Persist the switch so subsequent games use offline immediately
+            
             try {
+                // Retry immediately with offline service
                 loadedWords = await loadData(true);
             } catch (offlineError) {
                 console.error("Critical: Offline fallback also failed", offlineError);
-                navigate('/arcade');
+                setGameState(GameState.MENU);
                 return;
             }
         } else {
-             navigate('/arcade');
+             // If we were already offline and it failed, we can't do much
+             setGameState(GameState.MENU);
              return;
         }
     }
 
-    if (gameVariant === 'HOMOPHONE') {
+    // Apply Loaded Data
+    if (variant === 'HOMOPHONE') {
         setHomophones(loadedWords as HomophoneChallenge[]);
     } else {
         setWords(loadedWords as WordChallenge[]);
     }
 
-    if (gameVariant === 'SPEED') {
+    if (variant === 'SPEED') {
         setTimeLeft(60);
         setTimerActive(true);
     }
 
     setGameState(GameState.PLAYING);
       
-    if (['CLASSIC', 'SPEED', 'WHISPER', 'REVERSE', 'ADVENTURE', 'BOSS', 'DAILY', 'SILENT_LETTER', 'MULTIPLAYER'].includes(gameVariant)) {
+    // Auto-play audio logic
+    if (['CLASSIC', 'SPEED', 'WHISPER', 'REVERSE', 'ADVENTURE', 'BOSS', 'DAILY', 'SILENT_LETTER', 'MULTIPLAYER'].includes(variant)) {
         setTimeout(() => {
-           const firstItem = loadedWords[0] as any;
-           if (firstItem.word) {
-               playWord(firstItem.word, gameVariant === 'WHISPER');
+           if (loadedWords.length > 0) {
+             // Cast to any to safely access 'word' property if it exists
+             const firstItem = loadedWords[0] as any;
+             if (firstItem.word) {
+                 playWord(firstItem.word, variant === 'WHISPER');
+             }
            }
         }, 500);
     }
   };
 
+  // Robust Remedial Game with Auto-Fallback
   const startRemedialGame = async () => {
     GameAudio.playClick();
     const missedWords = score.history.filter(h => !h.isCorrect).map(h => h.word);
@@ -369,6 +421,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
 
     try {
         const data = await loadRemedialData(useOffline);
+        
         if (gameVariant === 'HOMOPHONE') {
             setHomophones(data as HomophoneChallenge[]);
         } else {
@@ -378,10 +431,15 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
             }
         }
         setGameState(GameState.PLAYING);
+
     } catch (e) {
         console.warn("Remedial generation failed", e);
+        
+        // --- FALLBACK LOGIC ---
         if (!useOffline) {
+            setLoadingMessage("AI unavailable. Switching to Offline Mode...");
             updateSettings({ isOfflineMode: true });
+
             try {
                 const data = await loadRemedialData(true);
                 if (gameVariant === 'HOMOPHONE') {
@@ -402,6 +460,28 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
     }
   };
 
+  const spinWheel = () => {
+    GameAudio.playClick();
+    setGameState(GameState.WHEEL_SPIN);
+    setIsSpinning(true);
+    const variants: GameVariant[] = ['CLASSIC', 'SPEED', 'HOMOPHONE', 'SCRAMBLE', 'MISSING_LETTER', 'REVERSE', 'WHISPER', 'SILENT_LETTER'];
+    
+    // Play clicking sound during spin
+    let spins = 0;
+    const interval = setInterval(() => {
+        if(spins < 10) GameAudio.playTick();
+        spins++;
+    }, 200);
+
+    setTimeout(() => {
+        clearInterval(interval);
+        setIsSpinning(false);
+        const random = variants[Math.floor(Math.random() * variants.length)];
+        GameAudio.playWin();
+        initGame(random, Difficulty.MEDIUM);
+    }, 3000);
+  };
+
   const startNewJourney = (theme: string) => {
       GameAudio.playClick();
       const newLevels: AdventureLevel[] = [
@@ -412,7 +492,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
       ];
       setAdventureLevels(newLevels);
       setJourneyTheme(theme);
-      setCustomTopic(""); 
+      setCustomTopic(""); // Clear input
   };
 
   const resetJourney = () => {
@@ -427,7 +507,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
     GameAudio.playClick();
     const level = adventureLevels.find(l => l.id === levelId);
     if (level && level.isUnlocked) {
-        initGame(level.difficulty);
+        initGame('ADVENTURE', level.difficulty);
     }
   };
 
@@ -444,19 +524,26 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
       isCorrect = inputToCheck.trim().toLowerCase() === targetWord.toLowerCase();
     }
 
+    // --- PROGRESS TRACKING (SRS) ---
+    // Record result in offline service regardless of mode to build mastery data
     OfflineService.trackProgress(targetWord, isCorrect);
     
+    // SFX and Animation Trigger
     if (isCorrect) {
         GameAudio.playCorrect();
     } else {
         GameAudio.playIncorrect();
+        // Trigger shake animation
         setInputAnimation('animate-shake');
         setTimeout(() => setInputAnimation(''), 500);
     }
 
+    // --- MULTIPLAYER LOGIC ---
     if (gameVariant === 'MULTIPLAYER') {
         const timeTaken = (Date.now() - mpStartTime) / 1000;
+        
         if (mpPlayerTurn === 1) {
+            // End P1 Turn
             setMpRoundStats(prev => ({
                 ...prev,
                 p1: { input: inputToCheck, time: timeTaken, correct: isCorrect }
@@ -464,27 +551,37 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
             setUserInput('');
             setMpPlayerTurn(2);
             setMpStartTime(Date.now());
+            // Play audio again for P2
             setTimeout(() => playWord(targetWord), 200);
             return; 
         } else {
+            // End P2 Turn
             const p2Stats = { input: inputToCheck, time: timeTaken, correct: isCorrect };
             const p1Stats = mpRoundStats.p1!;
+            
+            // Determine Winner
             let winner: 'p1' | 'p2' | 'draw' = 'draw';
             if (p1Stats.correct && !p2Stats.correct) winner = 'p1';
             else if (!p1Stats.correct && p2Stats.correct) winner = 'p2';
             else if (p1Stats.correct && p2Stats.correct) {
+                // Both correct, fastest wins
                 winner = p1Stats.time < p2Stats.time ? 'p1' : 'p2';
             }
+            // If both wrong, draw
+
             setMpRoundStats(prev => ({ ...prev, p2: p2Stats }));
             setMpWinner(winner);
+
             if (winner === 'p1') setMpScores(s => ({ ...s, p1: s.p1 + 1 }));
             if (winner === 'p2') setMpScores(s => ({ ...s, p2: s.p2 + 1 }));
+            
             GameAudio.playWin();
             setFeedback('mp_result');
             return;
         }
     }
 
+    // --- STANDARD LOGIC ---
     setScore(prev => ({
       ...prev,
       correct: prev.correct + (isCorrect ? 1 : 0),
@@ -516,11 +613,13 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
       setUserInput('');
       setFeedback('none');
       setMpWinner(null);
+      
       const nextW = words[currentIndex + 1]?.word;
       if (nextW && ['CLASSIC', 'SPEED', 'WHISPER', 'REVERSE', 'ADVENTURE', 'BOSS', 'DAILY', 'SILENT_LETTER', 'MULTIPLAYER'].includes(gameVariant)) {
         setTimeout(() => playWord(nextW, gameVariant === 'WHISPER'), 500);
       }
     } else {
+      // End of Game Checks
       let unlocked = false;
       if (gameVariant === 'ADVENTURE' && score.correct >= Math.floor(score.total * 0.8)) {
           const currentLevelIdx = adventureLevels.findIndex(l => l.difficulty === difficulty);
@@ -540,6 +639,53 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
 
   // --- RENDERERS ---
 
+  if (gameState === GameState.MENU) {
+    return (
+      <div className="flex flex-col items-center animate-fade-in pb-10">
+        <div className="text-center space-y-4 mb-8">
+          <div className="flex items-center justify-center gap-2">
+              <h2 className="text-4xl font-bold text-slate-800 dark:text-white transition-colors">Game Arcade</h2>
+              {settings.isOfflineMode && (
+                  <div className="bg-slate-200 dark:bg-slate-700 text-slate-500 text-xs px-2 py-1 rounded-full flex items-center gap-1 font-bold">
+                      <WifiOff size={12} /> OFFLINE
+                  </div>
+              )}
+          </div>
+          <p className="text-slate-500 dark:text-slate-400 max-w-md mx-auto">15 ways to master English spelling.</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full max-w-5xl px-4">
+          <MenuButton icon={<Keyboard size={24}/>} title="Spell by Sound" desc="Listen and spell. The classic mode." color="blue" onClick={() => handleGameSelect('CLASSIC')} />
+          <MenuButton icon={<Split size={24}/>} title="Homophone Battle" desc="Their, There, or They're?" color="emerald" onClick={() => handleGameSelect('HOMOPHONE')} />
+          <MenuButton icon={<Clock size={24}/>} title="Speed Speller" desc="60 seconds. How fast are you?" color="amber" onClick={() => handleGameSelect('SPEED')} />
+          <MenuButton icon={<EyeOff size={24}/>} title="Missing Letter" desc="Fill in the blanks: E_TR_ORD_NARY" color="indigo" onClick={() => handleGameSelect('MISSING_LETTER')} />
+          <MenuButton icon={<Shuffle size={24}/>} title="Unscramble" desc="Rearrange letters to find the word." color="purple" onClick={() => handleGameSelect('SCRAMBLE')} />
+          <MenuButton icon={<Users size={24}/>} title="Sentence to Spelling" desc="Identify the target word in a sentence." color="teal" onClick={() => handleGameSelect('SENTENCE_SPELL')} />
+          <MenuButton icon={<VolumeX size={24}/>} title="Whisper Mode" desc="Quiet, distorted audio. Listen closely." color="slate" onClick={() => handleGameSelect('WHISPER')} />
+          <MenuButton 
+            icon={<MapIcon size={24}/>} 
+            title="Word Journey" 
+            desc="Travel through a topic of your choice." 
+            color="lime" 
+            onClick={() => {
+                setGameVariant('ADVENTURE');
+                setGameState(GameState.ADVENTURE_MAP);
+            }} 
+          />
+          <MenuButton icon={<Skull size={24}/>} title="Boss Fight" desc="Survive 10 extremely hard words." color="red" onClick={() => handleGameSelect('BOSS')} />
+          <MenuButton icon={<Calendar size={24}/>} title="Daily Challenge" desc="One unique word every day." color="orange" onClick={() => handleGameSelect('DAILY')} />
+          <MenuButton icon={<Swords size={24}/>} title="1v1 Battle" desc="Local turn-based speed duel." color="pink" onClick={() => handleGameSelect('MULTIPLAYER')} />
+          <MenuButton icon={<Dices size={24}/>} title="Spin the Wheel" desc="Random category selection." color="fuchsia" onClick={spinWheel} />
+          <MenuButton icon={<Volume2 size={24}/>} title="Silent Hunters" desc="Knight, Psychology, Gnaw." color="cyan" onClick={() => handleGameSelect('SILENT_LETTER')} />
+          <MenuButton icon={<RefreshCcw size={24}/>} title="Reverse Spelling" desc="Type the word backwards!" color="rose" onClick={() => handleGameSelect('REVERSE')} />
+          <MenuButton icon={<Brain size={24}/>} title="Memory Flash" desc="See it for 2s, then spell it." color="violet" onClick={() => handleGameSelect('MEMORY')} />
+        </div>
+      </div>
+    );
+  }
+
+  // --- SPECIAL STATES ---
+
   if (gameState === GameState.DIFFICULTY_SELECT) {
     return (
       <div className="flex flex-col items-center animate-fade-in pb-10 min-h-[60vh] justify-center">
@@ -548,21 +694,34 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
           <p className="text-slate-500 dark:text-slate-400">Choose your challenge level</p>
         </div>
         <div className="grid grid-cols-2 gap-4 w-full max-w-lg px-4">
-          <button onClick={() => initGame(Difficulty.EASY)} className="p-6 rounded-2xl bg-green-50 dark:bg-green-900/30 border-2 border-green-100 dark:border-green-800 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/50 hover:border-green-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
+          <button onClick={() => initGame(gameVariant, Difficulty.EASY)} className="p-6 rounded-2xl bg-green-50 dark:bg-green-900/30 border-2 border-green-100 dark:border-green-800 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/50 hover:border-green-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
             <Star size={32} /> <span className="font-bold text-lg">Easy</span>
           </button>
-          <button onClick={() => initGame(Difficulty.MEDIUM)} className="p-6 rounded-2xl bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-100 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 hover:border-blue-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
+          <button onClick={() => initGame(gameVariant, Difficulty.MEDIUM)} className="p-6 rounded-2xl bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-100 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 hover:border-blue-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
             <Zap size={32} /> <span className="font-bold text-lg">Medium</span>
           </button>
-          <button onClick={() => initGame(Difficulty.HARD)} className="p-6 rounded-2xl bg-orange-50 dark:bg-orange-900/30 border-2 border-orange-100 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-900/50 hover:border-orange-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
+          <button onClick={() => initGame(gameVariant, Difficulty.HARD)} className="p-6 rounded-2xl bg-orange-50 dark:bg-orange-900/30 border-2 border-orange-100 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-900/50 hover:border-orange-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
             <Target size={32} /> <span className="font-bold text-lg">Hard</span>
           </button>
-          <button onClick={() => initGame(Difficulty.EXTREME)} className="p-6 rounded-2xl bg-red-50 dark:bg-red-900/30 border-2 border-red-100 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50 hover:border-red-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
+          <button onClick={() => initGame(gameVariant, Difficulty.EXTREME)} className="p-6 rounded-2xl bg-red-50 dark:bg-red-900/30 border-2 border-red-100 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/50 hover:border-red-200 hover:scale-[1.02] transition-all flex flex-col items-center gap-2">
             <Skull size={32} /> <span className="font-bold text-lg">Extreme</span>
           </button>
         </div>
-        <button onClick={() => navigate('/arcade')} className="mt-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-medium">Cancel</button>
+        <button onClick={() => setGameState(GameState.MENU)} className="mt-8 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-medium">Cancel</button>
       </div>
+    );
+  }
+
+  // ... (Rest of component renders are identical to previous, just ensuring logic update)
+  
+  if (gameState === GameState.WHEEL_SPIN) {
+    return (
+        <div className="flex flex-col items-center justify-center h-[60vh]">
+            <div className={`w-64 h-64 rounded-full border-8 border-primary-500 border-dashed ${isSpinning ? 'animate-spin' : ''} flex items-center justify-center bg-white dark:bg-slate-800 shadow-xl`}>
+                <Dices size={64} className="text-primary-500"/>
+            </div>
+            <h2 className="mt-8 text-2xl font-bold text-slate-800 dark:text-white animate-pulse">Spinning...</h2>
+        </div>
     );
   }
 
@@ -571,7 +730,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
           return (
               <div className="flex flex-col items-center animate-fade-in w-full max-w-2xl mx-auto px-4">
                   <div className="flex w-full justify-start items-center mb-8">
-                     <button onClick={() => navigate('/arcade')} className="text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white font-bold flex gap-2"><RotateCcw/> Exit</button>
+                     <button onClick={() => setGameState(GameState.MENU)} className="text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white font-bold flex gap-2"><RotateCcw/> Exit</button>
                   </div>
                   
                   <div className="bg-white dark:bg-slate-800 p-8 rounded-[2.5rem] shadow-xl border border-slate-100 dark:border-slate-700 w-full text-center">
@@ -622,7 +781,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
       return (
           <div className="flex flex-col items-center animate-fade-in w-full max-w-4xl mx-auto">
               <div className="flex w-full justify-between items-center mb-8 px-4">
-                  <button onClick={() => navigate('/arcade')} className="text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white font-bold flex gap-2"><RotateCcw/> Exit Map</button>
+                  <button onClick={() => setGameState(GameState.MENU)} className="text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white font-bold flex gap-2"><RotateCcw/> Exit Map</button>
                   <button onClick={resetJourney} className="text-lime-600 dark:text-lime-400 hover:text-lime-800 dark:hover:text-lime-300 font-bold flex gap-2 text-sm bg-lime-50 dark:bg-lime-900/20 px-3 py-1 rounded-lg"><Plus size={18}/> New Journey</button>
               </div>
               
@@ -632,6 +791,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
               </div>
 
               <div className="grid gap-6 w-full px-4 relative">
+                  {/* Connector Line */}
                   <div className="absolute left-1/2 top-10 bottom-10 w-1 bg-slate-200 dark:bg-slate-700 -translate-x-1/2 hidden md:block z-0 rounded-full"></div>
 
                   {adventureLevels.map((level, idx) => (
@@ -723,6 +883,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
           )}
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 flex-wrap">
+             {/* Special Adventure Navigation */}
              {gameVariant === 'ADVENTURE' && (
                  <>
                   <button onClick={() => setGameState(GameState.ADVENTURE_MAP)} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-lime-600 text-white px-8 py-3 rounded-full font-semibold hover:bg-lime-700 transition-colors shadow-lg shadow-lime-200 dark:shadow-none">
@@ -740,11 +901,11 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
               </button>
             )}
 
-            <button onClick={() => initGame(difficulty)} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-emerald-600 text-white px-8 py-3 rounded-full font-semibold hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200 dark:shadow-none">
+            <button onClick={() => initGame(gameVariant, difficulty)} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-emerald-600 text-white px-8 py-3 rounded-full font-semibold hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200 dark:shadow-none">
               <RotateCcw size={20} /> Play Again
             </button>
             
-            <button onClick={() => navigate('/arcade')} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-primary-600 text-white px-8 py-3 rounded-full font-semibold hover:bg-primary-700 transition-colors shadow-lg shadow-primary-200 dark:shadow-none">
+            <button onClick={() => setGameState(GameState.MENU)} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-primary-600 text-white px-8 py-3 rounded-full font-semibold hover:bg-primary-700 transition-colors shadow-lg shadow-primary-200 dark:shadow-none">
               <Home size={20} /> Arcade Menu
             </button>
           </div>
@@ -763,7 +924,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
   return (
     <div className="w-full max-w-xl mx-auto px-4 py-8 animate-fade-in relative">
       <div className="absolute top-4 left-4 md:left-0 z-10">
-        <button onClick={() => navigate('/arcade')} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm font-medium">Quit</button>
+        <button onClick={() => setGameState(GameState.SUMMARY)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm font-medium">Quit</button>
       </div>
 
       {gameVariant === 'SPEED' && (
@@ -825,7 +986,7 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
           {gameVariant === 'MISSING_LETTER' && (
              <div className="mb-8">
                 <p className="text-sm text-slate-400 mb-4 uppercase tracking-wider">Complete the word</p>
-                <div className="text-3xl md:text-4xl font-mono font-bold tracking-widest break-all text-center text-slate-800 dark:text-white uppercase">{maskedWord}</div>
+                <div className="text-4xl font-mono font-bold tracking-[0.2em] text-slate-800 dark:text-white uppercase">{maskedWord}</div>
              </div>
           )}
 
@@ -956,13 +1117,15 @@ const GameMode: React.FC<Props> = ({ settings, setHeaderConfig, updateSettings }
   );
 };
 
+// Helper components
 const CheckIcon = () => <div className="p-1 bg-green-100 dark:bg-green-900/50 rounded-full text-green-600 dark:text-green-400"><Check size={16} /></div>;
 const AlertIcon = () => <div className="p-1 bg-red-100 dark:bg-red-900/50 rounded-full text-red-600 dark:text-red-400"><AlertCircle size={16} /></div>;
 
 const GameSkeleton = () => {
-  const trackWave = getWaveSvg('#cbd5e1'); 
+  const trackWave = getWaveSvg('#cbd5e1'); // Slate-300
   return (
     <div className="w-full max-w-xl mx-auto px-4 py-8 animate-pulse">
+       {/* Replaces the straight bar with a wavy track for weaving effect */}
        <div className="w-full h-3 mb-8 relative opacity-50">
            <div 
              className="absolute inset-0 w-full h-full bg-repeat-x" 
@@ -982,6 +1145,49 @@ const GameSkeleton = () => {
       </div>
     </div>
   );
+};
+
+interface MenuButtonProps {
+    icon: React.ReactNode;
+    title: string;
+    desc: string;
+    onClick: () => void;
+    color: string;
+}
+
+const MenuButton: React.FC<MenuButtonProps> = ({ icon, title, desc, onClick, color }) => {
+    // Explicit color mapping to fix light mode visibility issues
+    const colorVariants: Record<string, { bg: string, text: string, border: string }> = {
+        blue: { bg: 'bg-blue-100 dark:bg-blue-900/20', text: 'text-blue-600 dark:text-blue-400', border: 'hover:border-blue-200 dark:hover:border-blue-800' },
+        emerald: { bg: 'bg-emerald-100 dark:bg-emerald-900/20', text: 'text-emerald-600 dark:text-emerald-400', border: 'hover:border-emerald-200 dark:hover:border-emerald-800' },
+        amber: { bg: 'bg-amber-100 dark:bg-amber-900/20', text: 'text-amber-600 dark:text-amber-400', border: 'hover:border-amber-200 dark:hover:border-amber-800' },
+        indigo: { bg: 'bg-indigo-100 dark:bg-indigo-900/20', text: 'text-indigo-600 dark:text-indigo-400', border: 'hover:border-indigo-200 dark:hover:border-indigo-800' },
+        purple: { bg: 'bg-purple-100 dark:bg-purple-900/20', text: 'text-purple-600 dark:text-purple-400', border: 'hover:border-purple-200 dark:hover:border-purple-800' },
+        teal: { bg: 'bg-teal-100 dark:bg-teal-900/20', text: 'text-teal-600 dark:text-teal-400', border: 'hover:border-teal-200 dark:hover:border-teal-800' },
+        slate: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-400', border: 'hover:border-slate-300 dark:hover:border-slate-600' },
+        lime: { bg: 'bg-lime-100 dark:bg-lime-900/20', text: 'text-lime-600 dark:text-lime-400', border: 'hover:border-lime-200 dark:hover:border-lime-800' },
+        red: { bg: 'bg-red-100 dark:bg-red-900/20', text: 'text-red-600 dark:text-red-400', border: 'hover:border-red-200 dark:hover:border-red-800' },
+        orange: { bg: 'bg-orange-100 dark:bg-orange-900/20', text: 'text-orange-600 dark:text-orange-400', border: 'hover:border-orange-200 dark:hover:border-orange-800' },
+        pink: { bg: 'bg-pink-100 dark:bg-pink-900/20', text: 'text-pink-600 dark:text-pink-400', border: 'hover:border-pink-200 dark:hover:border-pink-800' },
+        fuchsia: { bg: 'bg-fuchsia-100 dark:bg-fuchsia-900/20', text: 'text-fuchsia-600 dark:text-fuchsia-400', border: 'hover:border-fuchsia-200 dark:hover:border-fuchsia-800' },
+        cyan: { bg: 'bg-cyan-100 dark:bg-cyan-900/20', text: 'text-cyan-600 dark:text-cyan-400', border: 'hover:border-cyan-200 dark:hover:border-cyan-800' },
+        rose: { bg: 'bg-rose-100 dark:bg-rose-900/20', text: 'text-rose-600 dark:text-rose-400', border: 'hover:border-rose-200 dark:hover:border-rose-800' },
+        violet: { bg: 'bg-violet-100 dark:bg-violet-900/20', text: 'text-violet-600 dark:text-violet-400', border: 'hover:border-violet-200 dark:hover:border-violet-800' },
+    };
+
+    const styles = colorVariants[color] || colorVariants['blue'];
+
+    return (
+        <button onClick={onClick} className={`group relative p-6 rounded-3xl border-2 border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 transition-all text-left ${styles.border} hover:shadow-lg hover:-translate-y-1`}>
+            <div className="flex items-center gap-4 mb-3">
+              <div className={`p-3 rounded-xl ${styles.bg} ${styles.text}`}>
+                  {icon}
+              </div>
+              <h3 className="text-xl font-bold text-slate-800 dark:text-white">{title}</h3>
+            </div>
+            <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed">{desc}</p>
+        </button>
+    );
 };
 
 export default GameMode;
