@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Gamepad2, Settings as SettingsIcon } from 'lucide-react';
 import GameMode from './components/GameMode';
@@ -49,6 +48,53 @@ export default function App() {
     return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
   });
 
+  // --- HISTORY API INTEGRATION (Universal Back Button) ---
+  useEffect(() => {
+    // 1. Set initial state so the browser knows we are home
+    window.history.replaceState({ view: 'home' }, '');
+
+    // 2. Listen for the back button (Android Back / Browser Back)
+    const onPopState = (event: PopStateEvent) => {
+      const state = event.state;
+
+      // If state is null or home, reset to home screen
+      if (!state || state.view === 'home') {
+        setShowSettings(false);
+        setMode('home');
+        setHeaderConfig({ title: null, color: 'primary' });
+      } 
+      // If we went back to game state
+      else if (state.view === 'game') {
+        setShowSettings(false);
+        setMode('game');
+      } 
+      // If we went forward/back to settings
+      else if (state.view === 'settings') {
+        setShowSettings(true);
+      }
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Wrapper to open Game and push history
+  const navigateToGame = () => {
+    window.history.pushState({ view: 'game' }, '');
+    setMode('game');
+  };
+
+  // Wrapper to open Settings and push history
+  const navigateToSettings = () => {
+    window.history.pushState({ view: 'settings' }, '');
+    setShowSettings(true);
+  };
+
+  // Wrapper to go back (used by UI buttons to mimic back button)
+  const handleGoHome = () => {
+    window.history.back();
+  };
+
   // Apply Settings Side Effects
   useEffect(() => {
     // 1. Persist
@@ -76,11 +122,6 @@ export default function App() {
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
 
-  const handleGoHome = () => {
-    setMode('home');
-    setHeaderConfig({ title: null, color: 'primary' });
-  };
-
   const activeThemeClass = COLOR_THEMES[headerConfig.color] || COLOR_THEMES['primary'];
 
   return (
@@ -100,13 +141,13 @@ export default function App() {
           
           <nav className="flex items-center gap-3">
              <button 
-              onClick={() => setMode('game')}
+              onClick={navigateToGame}
               className={`px-4 py-2 rounded-full text-sm font-bold transition-all whitespace-nowrap ${mode === 'game' ? activeThemeClass : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
             >
               {headerConfig.title || 'Game Arcade'}
             </button>
              <button 
-              onClick={() => setShowSettings(true)}
+              onClick={navigateToSettings}
               className="p-2 rounded-full text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               title="Settings"
             >
@@ -141,7 +182,7 @@ export default function App() {
 
             <div className="w-full max-w-xl">
               <div 
-                onClick={() => setMode('game')}
+                onClick={navigateToGame}
                 className="group cursor-pointer bg-white dark:bg-slate-900 p-10 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 hover:border-primary-200 dark:hover:border-primary-800 hover:shadow-2xl hover:shadow-primary-100/50 dark:hover:shadow-primary-900/20 transition-all duration-300 flex flex-col items-center text-center"
               >
                 <div className="w-20 h-20 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-3xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-sm">
@@ -165,7 +206,7 @@ export default function App() {
         <SettingsModal 
           settings={settings} 
           updateSettings={updateSettings} 
-          onClose={() => setShowSettings(false)} 
+          onClose={() => window.history.back()} 
         />
       )}
     </div>
